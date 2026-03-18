@@ -1,55 +1,125 @@
 import { db, ref, set, get, onValue, update, remove, onDisconnect } from './firebase.js';
 import { setupMedia, createPeerConnection, createOffer, answerOffer, closeConnection, localStream } from './webrtc.js';
 
-// User System Setup
+// User System
 const userId = crypto.randomUUID ? crypto.randomUUID() : 'user_' + Date.now();
-const userCode = Math.floor(100000 + Math.random() * 900000).toString();
 let currentCallId = null;
+let currentRoomCode = null; // Store 4-digit code if user is in private room
 let isVideoMuted = false;
 let isAudioMuted = false;
-let facingMode = "user"; // Camera mode
+let facingMode = "user";
 
-// Elements
+// DOM Elements
 const homeScreen = document.getElementById('home-screen');
 const videoScreen = document.getElementById('video-screen');
-const myCodeEl = document.getElementById('my-code');
 const statusOverlay = document.getElementById('status-overlay');
 const callStatusText = document.getElementById('call-status');
+const btnSkip = document.getElementById('btn-skip');
 
-// Init User in Firebase
-async function initUser() {
-    myCodeEl.innerText = userCode;
-    const userRef = ref(db, `users/${userId}`);
+// Auto delete user presence on disconnect
+onDisconnect(ref(db, `users/${userId}`)).remove();
+
+// ==========================================
+// 1. CREATE PRIVATE CHAT (Generates 4-digit Code)
+// ==========================================
+document.getElementById('btn-create-private').addEventListener('click', async () => {
+    const hasMedia = await setupMedia();
+    if (!hasMedia) return;
+
+    // Generate 4-digit random code
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+    currentRoomCode = code;
     
-    // Auto delete on disconnect
-    onDisconnect(userRef).remove();
-
-    await set(userRef, {
-        code: userCode,
-        status: "online",
-        incomingCall: null,
+    // Save Room in Firebase
+    const roomRef = ref(db, `rooms/${code}`);
+    await set(roomRef, {
+        hostId: userId,
+        status: 'waiting',
         createdAt: Date.now()
     });
 
-    // Listen for incoming calls (Code Match or Random Match)
-    onValue(ref(db, `users/${userId}/incomingCall`), async (snapshot) => {
-        const callId = snapshot.val();
-        if (callId && callId !== currentCallId) {
-            currentCallId = callId;
-            await joinCall(callId);
+    // Auto delete room if host closes tab
+    onDisconnect(roomRef).remove();
+
+    // Show beautiful waiting screen with the code
+    showVideoScreen(`
+        Room Created Successfully!<br>
+        <span style="font-size:1rem; color:#aaa;">Ask your friend to enter this code:</span>
+        <span class="generated-code">${code}</span>
+        Waiting for friend to join...
+    `);
+    btnSkip.style.display = 'none';
+
+    // Listen for guest to join
+    onValue(roomRef, async (snapshot) => {
+        const data = snapshot.val();
+        if (data && data.status === 'connected' && data.callId && data.hostId === userId) {
+            currentCallId = data.callId;
+            createPeerConnection(currentCallId, true); // Host becomes caller
+            await createOffer(currentCallId);
         }
     });
-}
+});
 
-// 1. Random Chat Matchmaking
+// ==========================================
+// 2. JOIN PRIVATE CHAT
+// ==========================================
+document.getElementById('btn-join-private').addEventListener('click', async () => {
+    const code = document.getElementById('partner-code').value.trim();
+    
+    if (code.length !== 4 || isNaN(code)) {
+        return Swal.fire('Invalid Code', 'Please enter a valid 4-digit code.', 'warning');
+    }
+
+    const roomRef = ref(db, `rooms/${code}`);
+    const snapshot = await get(roomRef);
+
+    if (snapshot.exists() && snapshot.val().status === 'waiting') {
+        const hasMedia = await setupMedia();
+        if (!hasMedia) return;
+
+        currentRoomCode = code;
+        const callId = `call_${Date.now()}`;
+        currentCallId = callId;
+
+        // Update room status to connected
+        await update(roomRef, {
+            guestId: userId,
+            status: 'connected',
+            callId: callId
+        });
+
+        showVideoScreen(`Connecting to Room <b style="color:#00f2fe;">${code}</b>...`);
+        btnSkip.style.display = 'none';
+
+        // Wait for host to create offer
+        const checkOffer = setInterval(async () => {
+            const offerSnap = await get(ref(db, `calls/${callId}/offer`));
+            if (offerSnap.exists()) {
+                clearInterval(checkOffer);
+                createPeerConnection(callId, false); // Guest is callee
+                await answerOffer(callId, offerSnap.val());
+            }
+        }, 500);
+
+    } else {
+        Swal.fire('Error', 'Room not found or already full.', 'error');
+    }
+});
+
+// ==========================================
+// 3. RANDOM CHAT (Omegle Style)
+// ==========================================
 document.getElementById('btn-random').addEventListener('click', async () => {
     const hasMedia = await setupMedia();
     if (!hasMedia) return;
 
     showVideoScreen("Searching for random partner...");
-    await update(ref(db, `users/${userId}`), { status: 'waiting' });
+    btnSkip.style.display = 'block';
 
-    // Find waiting user
+    const myUserRef = ref(db, `users/${userId}`);
+    await set(myUserRef, { status: 'waiting', incomingCall: null });
+
     const usersRef = ref(db, 'users');
     const snapshot = await get(usersRef);
     let matchedUserId = null;
@@ -64,81 +134,38 @@ document.getElementById('btn-random').addEventListener('click', async () => {
     }
 
     if (matchedUserId) {
-        // Caller Side
         const callId = `call_${Date.now()}`;
         currentCallId = callId;
         
-        // Update both to connected
         await update(ref(db, `users/${userId}`), { status: 'connected' });
         await update(ref(db, `users/${matchedUserId}`), { status: 'connected', incomingCall: callId });
 
         createPeerConnection(callId, true);
         await createOffer(callId);
     } else {
-        // Just wait - logic handled by onValue listener above
-        callStatusText.innerText = "Waiting for someone to join...";
-    }
-});
-
-// 2. Private Chat (Code System)
-document.getElementById('btn-private').addEventListener('click', async () => {
-    const code = document.getElementById('partner-code').value.trim();
-    if (code.length !== 6) {
-        Swal.fire('Error', 'Please enter a valid 6-digit code', 'warning');
-        return;
-    }
-    if (code === userCode) {
-        Swal.fire('Error', 'You cannot call yourself!', 'error');
-        return;
-    }
-
-    const hasMedia = await setupMedia();
-    if (!hasMedia) return;
-
-    showVideoScreen("Connecting to private chat...");
-    
-    const usersRef = ref(db, 'users');
-    const snapshot = await get(usersRef);
-    let matchedUserId = null;
-
-    if (snapshot.exists()) {
-        snapshot.forEach(child => {
-            if (child.val().code === code) matchedUserId = child.key;
+        // Wait for someone else to find us
+        onValue(myUserRef, async (snap) => {
+            const data = snap.val();
+            if (data && data.incomingCall && data.incomingCall !== currentCallId) {
+                currentCallId = data.incomingCall;
+                
+                const checkOffer = setInterval(async () => {
+                    const offerSnap = await get(ref(db, `calls/${currentCallId}/offer`));
+                    if (offerSnap.exists()) {
+                        clearInterval(checkOffer);
+                        createPeerConnection(currentCallId, false);
+                        await answerOffer(currentCallId, offerSnap.val());
+                    }
+                }, 500);
+            }
         });
     }
-
-    if (matchedUserId) {
-        const callId = `call_${Date.now()}`;
-        currentCallId = callId;
-        
-        await update(ref(db, `users/${userId}`), { status: 'connected' });
-        await update(ref(db, `users/${matchedUserId}`), { status: 'connected', incomingCall: callId });
-
-        createPeerConnection(callId, true);
-        await createOffer(callId);
-    } else {
-        Swal.fire('Failed', 'User not found. Check the code and try again.', 'error');
-        endCall();
-    }
 });
 
-// Callee joins the call
-async function joinCall(callId) {
-    showVideoScreen("Connecting...");
-    await update(ref(db, `users/${userId}`), { status: 'connected' });
-    
-    // Wait for offer to be ready in db
-    const checkOffer = setInterval(async () => {
-        const offerSnap = await get(ref(db, `calls/${callId}/offer`));
-        if (offerSnap.exists()) {
-            clearInterval(checkOffer);
-            createPeerConnection(callId, false);
-            await answerOffer(callId, offerSnap.val());
-        }
-    }, 500);
-}
 
-// Controls
+// ==========================================
+// CONTROLS & CLEANUP
+// ==========================================
 document.getElementById('btn-mute').addEventListener('click', (e) => {
     isAudioMuted = !isAudioMuted;
     localStream.getAudioTracks()[0].enabled = !isAudioMuted;
@@ -159,15 +186,11 @@ document.getElementById('btn-camera').addEventListener('click', async () => {
     document.getElementById('local-video').srcObject = localStream;
 });
 
-// End Call
 document.getElementById('btn-end').addEventListener('click', endCall);
 
-// Skip (Random Match)
 document.getElementById('btn-skip').addEventListener('click', async () => {
     await endCall();
-    setTimeout(() => {
-        document.getElementById('btn-random').click();
-    }, 500);
+    setTimeout(() => { document.getElementById('btn-random').click(); }, 500);
 });
 
 async function endCall() {
@@ -177,31 +200,31 @@ async function endCall() {
         localStream.getTracks().forEach(track => track.stop());
     }
 
+    // Delete Private Room if existed
+    if (currentRoomCode) {
+        await remove(ref(db, `rooms/${currentRoomCode}`));
+        currentRoomCode = null;
+    }
+
+    // Delete Call Signaling Data
     if (currentCallId) {
-        await remove(ref(db, `calls/${currentCallId}`)); // Auto Delete call data
+        await remove(ref(db, `calls/${currentCallId}`));
+        currentCallId = null;
     }
     
-    await update(ref(db, `users/${userId}`), { status: 'online', incomingCall: null });
-    currentCallId = null;
+    // Reset User Status
+    await remove(ref(db, `users/${userId}`));
 
+    // Reset UI
     videoScreen.classList.remove('active');
     homeScreen.classList.add('active');
     document.getElementById('remote-video').srcObject = null;
     statusOverlay.style.display = 'flex';
 }
 
-function showVideoScreen(statusText) {
+function showVideoScreen(htmlContent) {
     homeScreen.classList.remove('active');
     videoScreen.classList.add('active');
-    callStatusText.innerText = statusText;
+    callStatusText.innerHTML = htmlContent;
     statusOverlay.style.display = 'flex';
 }
-
-// Copy Code
-document.getElementById('copy-code-btn').addEventListener('click', () => {
-    navigator.clipboard.writeText(userCode);
-    Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'Code Copied!', showConfirmButton: false, timer: 1500 });
-});
-
-// Initialize on Load
-initUser();
