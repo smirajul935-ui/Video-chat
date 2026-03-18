@@ -1,0 +1,106 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
+
+body {
+    background: #0f0f13;
+    color: #fff;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+}
+
+/* Background Animation */
+body::before {
+    content: '';
+    position: absolute;
+    top: -50%; left: -50%; width: 200%; height: 200%;
+    background: radial-gradient(circle at center, #2b1055 0%, #0f0f13 50%);
+    z-index: -1;
+    animation: rotateBg 20s linear infinite;
+}
+@keyframes rotateBg { 100% { transform: rotate(360deg); } }
+
+.screen { display: none; height: 100%; width: 100%; justify-content: center; align-items: center; }
+.screen.active { display: flex; flex-direction: column; }
+
+/* Glassmorphism Panel */
+.glass-panel {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    padding: 40px;
+    text-align: center;
+    width: 90%;
+    max-width: 450px;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+}
+
+.app-title { font-size: 2.5rem; margin-bottom: 20px; letter-spacing: 2px; }
+.app-title span { color: #00f2fe; text-shadow: 0 0 10px #00f2fe; }
+
+.user-info { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 10px; margin-bottom: 30px; display: flex; justify-content: center; align-items: center; gap: 10px;}
+.highlight { color: #fe006a; font-weight: bold; font-size: 1.5rem; letter-spacing: 3px; }
+
+.btn { width: 100%; padding: 15px; border: none; border-radius: 10px; font-size: 1.1rem; font-weight: 600; cursor: pointer; transition: 0.3s; margin-bottom: 15px; color: white;}
+.primary-btn { background: linear-gradient(45deg, #fe006a, #ff758c); box-shadow: 0 0 15px rgba(254, 0, 106, 0.5); }
+.primary-btn:hover { box-shadow: 0 0 25px rgba(254, 0, 106, 0.8); transform: translateY(-2px); }
+
+.secondary-btn { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); margin-top: 10px; }
+.secondary-btn:hover { background: rgba(255,255,255,0.2); }
+
+.private-chat-box input { width: 100%; padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.4); color: white; text-align: center; font-size: 1.2rem; outline: none; }
+.private-chat-box input:focus { border-color: #00f2fe; box-shadow: 0 0 10px rgba(0, 242, 254, 0.3); }
+
+.divider { margin: 20px 0; position: relative; }
+.divider span { background: #0f0f13; padding: 0 10px; color: #aaa; font-size: 0.9rem; position: relative; z-index: 1; }
+.divider::before { content: ''; position: absolute; top: 50%; left: 0; width: 100%; height: 1px; background: rgba(255,255,255,0.2); }
+
+/* Telegram Button - Strict Requirements */
+.telegram-btn {
+    display: block;
+    width: 100%;
+    margin-top: 30px;
+    padding: 15px;
+    background: linear-gradient(90deg, #00c6ff, #0072ff);
+    color: white;
+    text-decoration: none;
+    font-weight: 800;
+    border-radius: 10px;
+    font-size: 1.1rem;
+    animation: pulseGlow 2s infinite;
+    transition: transform 0.2s;
+}
+.telegram-btn:hover { transform: scale(1.05); }
+
+@keyframes pulseGlow {
+    0% { box-shadow: 0 0 10px rgba(0, 198, 255, 0.5); }
+    50% { box-shadow: 0 0 25px rgba(0, 198, 255, 0.9); }
+    100% { box-shadow: 0 0 10px rgba(0, 198, 255, 0.5); }
+}
+
+/* Video Screen */
+.video-container { position: relative; width: 100%; height: 100%; background: #000; }
+#remote-video { width: 100%; height: 100%; object-fit: cover; }
+#local-video { position: absolute; top: 20px; right: 20px; width: 120px; height: 160px; object-fit: cover; border-radius: 15px; border: 2px solid #00f2fe; box-shadow: 0 0 15px rgba(0,242,254,0.5); z-index: 10; background: #222; transform: scaleX(-1); }
+
+/* Controls */
+.controls-bar { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; background: rgba(0,0,0,0.6); padding: 15px 25px; border-radius: 30px; backdrop-filter: blur(10px); z-index: 10;}
+.control-btn { width: 50px; height: 50px; border-radius: 50%; border: none; background: rgba(255,255,255,0.2); color: white; font-size: 1.2rem; cursor: pointer; transition: 0.3s; }
+.control-btn:hover { background: rgba(255,255,255,0.4); }
+.end-btn { background: #ff4757; }
+.end-btn:hover { background: #ff6b81; box-shadow: 0 0 15px #ff4757; }
+.skip-btn { width: auto; padding: 0 20px; border-radius: 25px; background: #ffa502; font-weight: bold; }
+
+/* Status Overlay */
+.status-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 5; }
+.loader { border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #00f2fe; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+@media (max-width: 768px) {
+    .glass-panel { width: 95%; padding: 25px; }
+    #local-video { width: 90px; height: 120px; }
+    .controls-bar { width: 90%; justify-content: space-around; padding: 10px; }
+}
