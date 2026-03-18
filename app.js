@@ -1,47 +1,33 @@
 import { db, ref, set, get, onValue, update, remove, onDisconnect } from './firebase.js';
-import { setupMedia, createPeerConnection, createOffer, answerOffer, closeConnection, localStream } from './webrtc.js';
+import { setupMedia, createPeerConnection, createOffer, answerOffer, closeConnection, localStream, peerConnection } from './webrtc.js';
 
-// User System
 const userId = crypto.randomUUID ? crypto.randomUUID() : 'user_' + Date.now();
 let currentCallId = null;
-let currentRoomCode = null; // Store 4-digit code if user is in private room
+let currentRoomCode = null; 
 let isVideoMuted = false;
 let isAudioMuted = false;
 let facingMode = "user";
 
-// DOM Elements
 const homeScreen = document.getElementById('home-screen');
 const videoScreen = document.getElementById('video-screen');
 const statusOverlay = document.getElementById('status-overlay');
 const callStatusText = document.getElementById('call-status');
 const btnSkip = document.getElementById('btn-skip');
 
-// Auto delete user presence on disconnect
 onDisconnect(ref(db, `users/${userId}`)).remove();
 
-// ==========================================
-// 1. CREATE PRIVATE CHAT (Generates 4-digit Code)
-// ==========================================
+// 1. CREATE PRIVATE CHAT
 document.getElementById('btn-create-private').addEventListener('click', async () => {
     const hasMedia = await setupMedia();
     if (!hasMedia) return;
 
-    // Generate 4-digit random code
     const code = Math.floor(1000 + Math.random() * 9000).toString();
     currentRoomCode = code;
     
-    // Save Room in Firebase
     const roomRef = ref(db, `rooms/${code}`);
-    await set(roomRef, {
-        hostId: userId,
-        status: 'waiting',
-        createdAt: Date.now()
-    });
-
-    // Auto delete room if host closes tab
+    await set(roomRef, { hostId: userId, status: 'waiting', createdAt: Date.now() });
     onDisconnect(roomRef).remove();
 
-    // Show beautiful waiting screen with the code
     showVideoScreen(`
         Room Created Successfully!<br>
         <span style="font-size:1rem; color:#aaa;">Ask your friend to enter this code:</span>
@@ -50,26 +36,20 @@ document.getElementById('btn-create-private').addEventListener('click', async ()
     `);
     btnSkip.style.display = 'none';
 
-    // Listen for guest to join
     onValue(roomRef, async (snapshot) => {
         const data = snapshot.val();
         if (data && data.status === 'connected' && data.callId && data.hostId === userId) {
             currentCallId = data.callId;
-            createPeerConnection(currentCallId, true); // Host becomes caller
+            createPeerConnection(currentCallId, true);
             await createOffer(currentCallId);
         }
     });
 });
 
-// ==========================================
 // 2. JOIN PRIVATE CHAT
-// ==========================================
 document.getElementById('btn-join-private').addEventListener('click', async () => {
     const code = document.getElementById('partner-code').value.trim();
-    
-    if (code.length !== 4 || isNaN(code)) {
-        return Swal.fire('Invalid Code', 'Please enter a valid 4-digit code.', 'warning');
-    }
+    if (code.length !== 4 || isNaN(code)) return Swal.fire('Invalid Code', 'Please enter a valid 4-digit code.', 'warning');
 
     const roomRef = ref(db, `rooms/${code}`);
     const snapshot = await get(roomRef);
@@ -82,34 +62,25 @@ document.getElementById('btn-join-private').addEventListener('click', async () =
         const callId = `call_${Date.now()}`;
         currentCallId = callId;
 
-        // Update room status to connected
-        await update(roomRef, {
-            guestId: userId,
-            status: 'connected',
-            callId: callId
-        });
+        await update(roomRef, { guestId: userId, status: 'connected', callId: callId });
 
         showVideoScreen(`Connecting to Room <b style="color:#00f2fe;">${code}</b>...`);
         btnSkip.style.display = 'none';
 
-        // Wait for host to create offer
         const checkOffer = setInterval(async () => {
             const offerSnap = await get(ref(db, `calls/${callId}/offer`));
             if (offerSnap.exists()) {
                 clearInterval(checkOffer);
-                createPeerConnection(callId, false); // Guest is callee
+                createPeerConnection(callId, false);
                 await answerOffer(callId, offerSnap.val());
             }
         }, 500);
-
     } else {
         Swal.fire('Error', 'Room not found or already full.', 'error');
     }
 });
 
-// ==========================================
-// 3. RANDOM CHAT (Omegle Style)
-// ==========================================
+// 3. RANDOM CHAT
 document.getElementById('btn-random').addEventListener('click', async () => {
     const hasMedia = await setupMedia();
     if (!hasMedia) return;
@@ -120,16 +91,12 @@ document.getElementById('btn-random').addEventListener('click', async () => {
     const myUserRef = ref(db, `users/${userId}`);
     await set(myUserRef, { status: 'waiting', incomingCall: null });
 
-    const usersRef = ref(db, 'users');
-    const snapshot = await get(usersRef);
+    const snapshot = await get(ref(db, 'users'));
     let matchedUserId = null;
 
     if (snapshot.exists()) {
         snapshot.forEach(child => {
-            const user = child.val();
-            if (user.status === 'waiting' && child.key !== userId) {
-                matchedUserId = child.key;
-            }
+            if (child.val().status === 'waiting' && child.key !== userId) matchedUserId = child.key;
         });
     }
 
@@ -143,12 +110,10 @@ document.getElementById('btn-random').addEventListener('click', async () => {
         createPeerConnection(callId, true);
         await createOffer(callId);
     } else {
-        // Wait for someone else to find us
         onValue(myUserRef, async (snap) => {
             const data = snap.val();
             if (data && data.incomingCall && data.incomingCall !== currentCallId) {
                 currentCallId = data.incomingCall;
-                
                 const checkOffer = setInterval(async () => {
                     const offerSnap = await get(ref(db, `calls/${currentCallId}/offer`));
                     if (offerSnap.exists()) {
@@ -162,10 +127,11 @@ document.getElementById('btn-random').addEventListener('click', async () => {
     }
 });
 
+// ==========================================
+// FIX: CONTROLS (MUTE, VIDEO OFF/ON, CAMERA SWITCH)
+// ==========================================
 
-// ==========================================
-// CONTROLS & CLEANUP
-// ==========================================
+// Audio Mute/Unmute
 document.getElementById('btn-mute').addEventListener('click', (e) => {
     isAudioMuted = !isAudioMuted;
     localStream.getAudioTracks()[0].enabled = !isAudioMuted;
@@ -173,21 +139,68 @@ document.getElementById('btn-mute').addEventListener('click', (e) => {
     e.currentTarget.style.color = isAudioMuted ? '#ff4757' : 'white';
 });
 
-document.getElementById('btn-camera').addEventListener('click', async () => {
-    facingMode = facingMode === "user" ? "environment" : "user";
-    const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingMode }, audio: !isAudioMuted });
-    
-    const videoTrack = newStream.getVideoTracks()[0];
-    const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
-    if (sender) sender.replaceTrack(videoTrack);
-    
-    localStream.removeTrack(localStream.getVideoTracks()[0]);
-    localStream.addTrack(videoTrack);
-    document.getElementById('local-video').srcObject = localStream;
+// Video Off/On (NEW)
+document.getElementById('btn-video').addEventListener('click', (e) => {
+    isVideoMuted = !isVideoMuted;
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (videoTrack) {
+        videoTrack.enabled = !isVideoMuted; // Toggle video track
+    }
+    e.currentTarget.innerHTML = isVideoMuted ? '<i class="fas fa-video-slash"></i>' : '<i class="fas fa-video"></i>';
+    e.currentTarget.style.color = isVideoMuted ? '#ff4757' : 'white';
 });
 
+// Camera Switch Fix (Front/Back)
+document.getElementById('btn-camera').addEventListener('click', async () => {
+    try {
+        // Toggle direction
+        facingMode = facingMode === "user" ? "environment" : "user";
+        
+        // Mobile browsers require stopping the old track before asking for the new one properly
+        const oldVideoTrack = localStream.getVideoTracks()[0];
+        if (oldVideoTrack) oldVideoTrack.stop();
+
+        // Get new stream only for Video
+        const newStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: facingMode }, 
+            audio: false 
+        });
+        
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        newVideoTrack.enabled = !isVideoMuted; // keep the mute state
+
+        // Replace track in Peer Connection (if connected)
+        if (peerConnection) {
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) sender.replaceTrack(newVideoTrack);
+        }
+        
+        // Update Local Video Element
+        localStream.removeTrack(oldVideoTrack);
+        localStream.addTrack(newVideoTrack);
+        
+        const localVideoElement = document.getElementById('local-video');
+        localVideoElement.srcObject = localStream;
+        
+        // If back camera is used, remove the mirror effect (scaleX)
+        if (facingMode === "environment") {
+            localVideoElement.style.transform = "scaleX(1)";
+        } else {
+            localVideoElement.style.transform = "scaleX(-1)";
+        }
+
+    } catch (error) {
+        console.error("Camera switch error:", error);
+        Swal.fire('Error', 'Could not switch camera. Device might not support it.', 'error');
+        // Revert facingMode variable
+        facingMode = facingMode === "user" ? "environment" : "user"; 
+    }
+});
+
+// End Call
 document.getElementById('btn-end').addEventListener('click', endCall);
 
+// Skip Call
 document.getElementById('btn-skip').addEventListener('click', async () => {
     await endCall();
     setTimeout(() => { document.getElementById('btn-random').click(); }, 500);
@@ -200,19 +213,16 @@ async function endCall() {
         localStream.getTracks().forEach(track => track.stop());
     }
 
-    // Delete Private Room if existed
     if (currentRoomCode) {
         await remove(ref(db, `rooms/${currentRoomCode}`));
         currentRoomCode = null;
     }
 
-    // Delete Call Signaling Data
     if (currentCallId) {
         await remove(ref(db, `calls/${currentCallId}`));
         currentCallId = null;
     }
     
-    // Reset User Status
     await remove(ref(db, `users/${userId}`));
 
     // Reset UI
@@ -220,6 +230,14 @@ async function endCall() {
     homeScreen.classList.add('active');
     document.getElementById('remote-video').srcObject = null;
     statusOverlay.style.display = 'flex';
+
+    // Reset Button states
+    isVideoMuted = false;
+    isAudioMuted = false;
+    document.getElementById('btn-video').innerHTML = '<i class="fas fa-video"></i>';
+    document.getElementById('btn-video').style.color = 'white';
+    document.getElementById('btn-mute').innerHTML = '<i class="fas fa-microphone"></i>';
+    document.getElementById('btn-mute').style.color = 'white';
 }
 
 function showVideoScreen(htmlContent) {
